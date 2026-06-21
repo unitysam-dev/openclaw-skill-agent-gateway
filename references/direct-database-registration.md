@@ -185,3 +185,17 @@ curl -X POST http://localhost:8081/api/v1/register \
 ```
 
 Only use direct database insertion when API validation blocks legitimate registrations.
+
+## Project Repository Split — 2026-06-21
+
+The deployable Agent Gateway project now lives in:
+
+```text
+https://github.com/unitysam-dev/agent-gateway
+```
+
+Use that repo for registry code, WordPress plugin code, docs, demos, source of
+truth, handoffs, and deployable artifacts.
+
+This skill repo should remain focused on agent instructions and workflow
+guidance only.
