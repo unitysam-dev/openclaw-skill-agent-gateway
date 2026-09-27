@@ -1,87 +1,171 @@
 ---
-name: agent-gateway-registry
+name: "agent-gateway"
+description: "Add real conversational Telegram/chat operation to the current V3 sandbox-loop skill."
 title: Agent Gateway Registry Operations
-description: Deploy, configure, and manage Agent Gateway Registry for business-to-agent discovery. Handles v0.1 preservation, v0.2 staged upgrades, action state model, and WordPress plugin integration.
-version: 1.0.0
-trigger: When user mentions "agent gateway", "AGW", "registry", "/.well-known/agent", "action state", "availability_lookup", or business agent profile work
+trigger: When user mentions "agent gateway", "AGW", "registry", "/.well-known/agent", "action state", "availability_lookup", "reservation_intent_create", "payment_or_pms_handoff", sandbox demo booking, business agent profile work, or asks to book/find/reserve through Agent Gateway in chat or Telegram
 ---
 
 # Agent Gateway Registry Operations
 
 ## Overview
 
-Agent Gateway Registry helps businesses become discoverable and usable by AI agents without forcing agents to scrape websites, bypass bot protections, or pretend to be human browsers.
+Agent Gateway helps businesses become discoverable and usable by AI agents without forcing agents to scrape websites, bypass bot protections, or pretend to be human browsers. A business exposes only the specific functions it is happy for agents to use and keeps everything else private — reorganising the site for agents rather than redesigning the internet.
 
-**Core Principle:** The registry is the discovery layer. The plugin is an onboarding and exposure layer. Business systems remain authoritative. Agent Gateway must NOT become a booking engine, payment processor, ecommerce platform, CRM, or inventory system.
+**Layering:** The registry is the discovery layer. The plugin is the onboarding and exposure layer. Business systems (and, in production, real payment/PMS providers) remain authoritative and execute the actual actions. Agent Gateway governs and exposes the action interface; it does not replace the business's own booking, payment, CRM, or inventory systems.
+
+**Product stance (current):** The goal is automation — authorised agents completing real business workflows through business-approved rails. Human approval is one configurable policy mode, not a mandatory gate on every action. Payment is not taboo: Agent Gateway exposes/governs the action interface while business systems and payment providers execute authorised actions. Do not reintroduce blanket "Agent Gateway must never touch payment/booking" language.
+
+## Version Map
+
+- **v0.1** — frozen baseline (do not modify directly).
+- **v0.2** — action-state model (detected/approved/verified) and metadata registry.
+- **V3** — executable reservation orchestration: tokenized reservation intent, payment/PMS handoff, and (for demos) a sandbox loop-close that returns a fake confirmed booking.
+
+## V3: Reservation Orchestration and Sandbox Loop-Close
+
+V3 adds two agent-facing actions on top of the v2 metadata registry.
+
+### V3 actions (discoverable via `/api/v1/actions`)
+
+- `reservation_intent_create` → endpoint `agent-gateway/v1/reservation-intents`
+- `payment_or_pms_handoff` → endpoint `agent-gateway/v1/payment-or-pms-handoff`
+
+Both are advertised in the registry `ACTIONS` list and in the site's `/capabilities` and `/.well-known` discovery surfaces.
+
+### The end-to-end agent loop
+
+```
+discovery -> catalogue -> availability -> reservation_intent_create
+  -> payment_or_pms_handoff (prompt) -> "Yes, I verify" -> booking_confirmed
+```
+
+1. Agent discovers the business and its actions via the registry.
+2. Agent reads availability and creates a reservation intent, receiving an `intent_token` (`intent_<64 hex>`) bound to a re-evaluated availability reference.
+3. Agent calls the payment/PMS handoff with the intent token.
+
+### Sandbox demo mode (fake, zero real side effects)
+
+`sandbox_demo_mode` is an admin setting, **default OFF**. It exists only for controlled demonstration on a private test site; it uses no real payment provider, PMS, customer, or inventory system.
+
+When enabled, the payment/PMS handoff becomes a two-stage flow:
+
+1. **Prompt stage** — first handoff call returns `status: payment_verification_required` with `prompt: "Do you verify payment?"` and `expected_response: "Yes, I verify"`. No booking is created.
+2. **Confirm stage** — a second handoff call with `payment_verification: "Yes, I verify"` returns `status: booking_confirmed`, `sandbox: true`, a `sandbox_confirmation_reference`, and writes an explicitly-labelled `sandbox_booking` record (status `completed`) into the plugin's Agent Requests admin list.
+
+Guards (fail-closed):
+
+- Only the exact string `Yes, I verify` advances; any other value returns HTTP 400.
+- The confirm stage returns HTTP 409 if the prompt stage was never issued for that intent.
+- Repeat confirms are idempotent and return the cached booking.
+- All real side effects stay false: `payment_processed=false`, `reservation_hold_created=false`, `inventory_locked=false`, `inventory_decremented=false`. The `payment_verified`/`booking_created` flags that read `true` are explicitly fake, marked `sandbox_only: true`.
+
+When sandbox mode is OFF, the handoff returns instructions-only `handoff_ready` with no side effects (production-safe default).
+
+### Idempotency (important for autonomous agents)
+
+Use a **fresh `idempotency_key` for each distinct request payload**. In particular, the payment-verification prompt request and the confirmation request must use **different** keys, because the payloads differ (the confirm adds `payment_verification`). Reusing the same key across the prompt and the confirm trips the payload-conflict guard and returns HTTP 409, stalling the loop. Reuse a key only to retry the exact same payload.
+
+## Conversational Agent Operation (Telegram / Chat)
+
+When the user asks to test or use Agent Gateway in a **real agent conversation**, do not substitute `demo/v3_agent_demo_flow.py`, a prerecorded transcript, or a one-shot scripted run. The conversation itself is the test surface.
+
+### Required conversational behaviour
+
+1. Treat the user's natural-language booking request as the start of the flow.
+2. Discover matching businesses through the configured Agent Gateway registry. Do not jump directly to a known test-site endpoint unless the user explicitly asks for direct-site mode.
+3. Present useful catalogue/availability results conversationally. Do not dump raw JSON unless requested.
+4. Ask only for missing booking decisions (dates, room, guests, budget) and retain the selected business/room/availability reference in the current conversation state.
+5. Before creating a reservation intent, briefly confirm the selected room, dates, guest count, and sandbox status.
+6. Create the reservation intent with a fresh idempotency key and retain the returned intent token privately for the next turn.
+7. Call the first payment/PMS handoff with its own fresh idempotency key.
+8. If it returns `payment_verification_required`, relay the gateway's prompt to the user and **stop the turn**. Do not auto-answer it, infer consent, or run the confirmation call in the same turn.
+9. Only after the user replies with the exact required phrase `Yes, I verify`, call the confirmation handoff using a new idempotency key and `payment_verification: "Yes, I verify"`.
+10. Report success only if the returned response contains `status=booking_confirmed`, `sandbox=true`, `is_confirmation=true`, `confirmation_type=sandbox_booking`, and a `sandbox_booking_*` confirmation reference.
+11. State plainly that the payment and booking are fake sandbox records and that `payment_processed=false`; do not imply money moved or real inventory changed.
+12. Tell the user where to inspect the resulting record in WordPress: **Agent Gateway → Agent Requests**.
+
+### Conversation-state rules
+
+- Keep the intent token and idempotency keys out of normal chat unless the user asks for technical evidence.
+- Never reuse the prompt idempotency key for confirmation.
+- If the user changes dates, room, guest count, or other payload fields, restart from availability and create a new intent.
+- If the conversation/session resets after intent creation, do not guess or reconstruct the token. Restart safely from availability.
+- If registry discovery is unavailable, say that the conversational pathway is not ready; do not silently fall back to the demo script and claim the Telegram test passed.
+
+### Acceptance standard for a real Telegram test
+
+A real conversational test passes only when:
+
+- the user initiated the request in ordinary language;
+- the agent discovered the business via the registry;
+- at least one user choice/confirmation occurred conversationally;
+- the payment-verification prompt and user's exact reply occurred in separate chat turns;
+- the agent returned the sandbox confirmation; and
+- the corresponding `sandbox_booking` record is visible in WordPress admin.
 
 ## Architecture
 
 ### v0.1 (Frozen Baseline)
 
-**Ports:**
-- Registry API: 8081
-- WordPress Plugin Site: 8082
-- Test Instance: 8083
-- Fallback: 8084
+**Ports:** Registry API 8081; WordPress Plugin Site 8082; Test Instance 8083; Fallback 8084.
+**Backup:** `/opt/agent-gateway-v0.1-working-20260607-0201.tar.gz`.
+**CRITICAL:** Never modify v0.1 directly. All later work happens in a separate working copy/branch.
 
-**Backup:** `/opt/agent-gateway-v0.1-working-20260607-0201.tar.gz`
+### Canonical repo and source of truth
 
-**CRITICAL:** Never modify v0.1 directly. All v0.2 work happens in separate working copy.
+The deployable project and cross-agent source of truth is the GitHub repo `unitysam-dev/agent-gateway`. Read `SOURCE_OF_TRUTH.md`, `AGENT_GATEWAY_CHECKPOINT.md`, and `docs/OPERATION_PROTOCOL.md` before handoff, deploy, registry, or plugin work. Handovers and checkpoints live in that repo, not in local scratch paths.
 
-### v0.2 (Development)
+### Controlled test site
 
-**Ports:**
-- Registry API: 8085
-- WordPress Plugin Site: 8086
-- Test Endpoints: 8087-8088
+The Reggae Palace / `openclaw-bent...hstgr.cloud` WordPress instance is a private throwaway harness for testing the plugin and watching the loop close. It is never public. Do not gold-plate it; canned availability is fine as long as the loop visibly completes and shows in the plugin.
 
-**Working Directory:** `/home/node/.openclaw/workspace/registry-v0.2/agent-gateway/`
+## Action State Model (v0.2)
 
-## Action State Model
+Three states for every action:
 
-v0.2 introduces three states for every action:
+1. **detected** — plugin found a compatible system (WooCommerce, Bookly, etc.).
+2. **approved** — site owner explicitly allowed agents to access that action.
+3. **verified** — Agent Gateway tested the action and confirmed it works.
 
-1. **detected** — Plugin found a compatible system (WooCommerce, Bookly, etc.)
-2. **approved** — Site owner explicitly allowed agents to access that action
-3. **verified** — Agent Gateway tested the action and confirmed it works
+**Detection results:** `supported_by_agent_gateway`, `not_yet_supported`, `custom_endpoint_required`.
 
-**Detection Results:**
-- `supported_by_agent_gateway` — Full native support available
-- `not_yet_supported` — Not yet implemented
-- `custom_endpoint_required` — Requires custom endpoint configuration
-
-**Search Behavior:** Only **verified** actions are marked as `available: true`. Detected/approved actions show their current state with human-readable messages.
+**Search behaviour:** only **verified** actions are marked `available: true`. Detected/approved actions show their current state with human-readable messages. Search results imply a working action only when `verified`.
 
 ## Key Files
 
 ### Registry
-- `registry/app.py` — Main FastAPI application
-- `registry/schema.sql` — Database schema (v0.1)
-- `registry/schema_v0.2.sql` — Extended schema with action_states table
-- `start-registry.sh` / `start-registry-v0.2.sh` — Startup scripts
+- `registry/app.py` — main FastAPI application; `ACTIONS` list advertises available actions (now includes the V3 actions).
+- `registry/schema.sql` / `registry/schema_v0.2.sql` — schemas.
 
 ### WordPress Plugin
-- `wordpress-plugin/agent-gateway/agent-gateway.php` — Main plugin file
-- Auto-detects: WooCommerce, Bookly, Amelia, The Events Calendar, Contact Form 7, WPForms, Gravity Forms
+- `wordpress-plugin/agent-gateway/agent-gateway.php` — main plugin file. Auto-detects WooCommerce, Bookly, Amelia, The Events Calendar, Contact Form 7, WPForms, Gravity Forms.
+- V3 handlers live here: reservation-intent creation, payment/PMS handoff, and the sandbox loop-close.
 
 ### Demo/Test
-- `demo/availability_adapter.py` — Mock booking system (port 8088)
-- `demo/register_demo_business.py` — Registration helper
-- `test-harness/index.html` + `app.js` — Test UI (port 8087)
+- `demo/v3_agent_demo_flow.py` — scripted diagnostic only; supports `--verify-fake-payment`. It may verify endpoint mechanics, but it does **not** satisfy a request for a real Telegram/chat conversation.
+- `demo/availability_adapter.py` — mock availability system.
 
 ## API Endpoints
 
-### v0.2 Action State Endpoints
+### V3 executable endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
+| `agent-gateway/v1/reservation-intents` | POST | Create a tokenized reservation intent bound to an availability reference |
+| `agent-gateway/v1/payment-or-pms-handoff` | POST | Payment/PMS handoff; instructions-only by default, sandbox loop-close when `sandbox_demo_mode` is on |
+
+### v0.2 action-state endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/actions` | GET | List advertised actions (includes V3 actions) |
 | `/api/v1/actions/detect` | POST | Report detected actions from plugin |
 | `/api/v1/actions/approve` | POST | Approve a detected action |
 | `/api/v1/actions/verify` | POST | Verify an approved action works |
-| `/api/v1/business/{id}/actions` | GET | Get all action states for a business |
-| `/api/v1/business/{id}` | GET | Get business details with action states |
+| `/api/v1/business/{id}` | GET | Business details with action states |
+| `/api/v1/business/{id}/actions` | GET | All action states for a business |
 
-### Core Endpoints (unchanged)
+### Core endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -90,394 +174,74 @@ v0.2 introduces three states for every action:
 | `/api/v1/verify` | POST | Verify domain ownership |
 | `/health` | GET | Health check |
 
-## Environment Variables
-
-```bash
-# Required
-AGW_REGISTRATION_API_KEY=<secure_random_key>
-AGW_ADMIN_TOKEN=<secure_random_key>
-
-# Optional (dev)
-AGW_DEV_MODE=true                    # Enable dev mode
-AGW_ALLOW_LOCAL_VERIFICATION=true    # Allow local verification
-AGW_ALLOW_PRIVATE_FETCH=true         # Allow fetching from private IPs
-AGW_DB_PATH=/data/agent_gateway.sqlite3
-AGW_HOST=0.0.0.0
-AGW_PORT=8085
-```
-
-## Operations
-
-### User Communication Preference
-
-**CRITICAL: Execute first, explain if asked.**
-
-This user's preference pattern:
-- ✅ **DO:** Take action immediately when request is clear
-- ✅ **DO:** Provide summary after completion
-- ❌ **DON'T:** Ask for confirmation before executing obvious fixes
-- ❌ **DON'T:** Explain what you're about to do before doing it
-- ❌ **DON'T:** Provide multiple options when user wants direct action
-
-**Signal phrases that indicate "just do it":**
-- "do this"
-- "make the required changes"
-- "fix it"
-- "do it now"
-- (any imperative without question mark)
-
-**Example exchange:**
-```
-User: "download page returns: Forbidden"
-→ IMMEDIATE ACTION: Diagnose and fix
-→ AFTER: "Fixed. [brief technical summary]"
-
-WRONG: "I see the issue. Would you like me to..."
-```
-
-### Start v0.2 Registry
-
-```bash
-cd /home/node/.openclaw/workspace/registry-v0.2/agent-gateway/registry
-export AGW_DB_PATH="../data/agent_gateway_v0.2.sqlite3"
-export AGW_DEV_MODE="true"
-export AGW_ALLOW_LOCAL_VERIFICATION="true"
-export AGW_REGISTRATION_API_KEY="..."
-export AGW_ADMIN_TOKEN="..."
-uvicorn app:app --host 0.0.0.0 --port 8085
-```
-
-### Start Demo Availability Adapter
-
-```bash
-cd /home/node/.openclaw/workspace/registry-v0.2/agent-gateway/demo
-python availability_adapter.py
-# Runs on port 8088
-```
-
-### Start Test Harness
-
-```bash
-cd /home/node/.openclaw/workspace/registry-v0.2/agent-gateway/test-harness
-python server.py
-# Runs on port 8087
-```
-
-### Register Demo Business
-
-```bash
-cd /home/node/.openclaw/workspace/registry-v0.2/agent-gateway/demo
-AGW_REGISTRATION_API_KEY="..." python register_demo_business.py
-```
-
 ## Security Principles
 
-- **No admin access** through Agent Gateway
-- **No destructive actions** unless explicitly approved and protected
-- **No automatic payment processing** in v0.2
-- Rate limiting enforced at adapter level
-- Per-action enablement required
-- Owner approval required for all commercial actions
+- No admin access through Agent Gateway.
+- No destructive actions unless explicitly approved and protected.
+- Real payment/PMS execution belongs to the business's own systems and providers; Agent Gateway governs the interface. Sandbox demo mode performs only clearly-labelled fake payment verification and fake booking confirmation with no real side effects, and is default OFF.
+- Rate limiting enforced at adapter level; per-action enablement required.
+- Owner approval is a configurable policy mode, applied where the business chooses — not a blanket requirement on every action.
 
 ## Detection (Local Only)
 
-Detection must happen **locally inside WordPress**. Never externally scan websites from the registry.
+Detection must happen locally inside WordPress. Never externally scan websites from the registry. Prefer "detect compatible integrations", "discover installed systems", "identify supported site functions"; avoid "scan".
 
-**Preferred language:**
-- "detect compatible integrations" ✓
-- "discover installed systems" ✓
-- "identify supported site functions" ✓
-- "scan" ✗ (avoid)
+## Operations Notes
 
-## Rollback Procedure
-
-If v0.2 fails:
-
-1. Stop v0.2 services (ports 8085-8088)
-2. Restore v0.1 from backup if needed:
-   ```bash
-   tar -xzf /opt/agent-gateway-v0.1-working-20260607-0201.tar.gz -C /home/node/.openclaw/workspace/
-   ```
-3. Restart v0.1 services (ports 8081-8084)
-
-## References
-
-- `references/v0.1-backup-location.md` — v0.1 backup path and verification
-- `references/v0.2-implementation-stages.md` — Staged rollout plan (4 stages)
-- `references/action-state-model.md` — Detailed state machine documentation
-- `references/demo-adapter-spec.md` — Availability adapter API specification
-- `references/direct-database-registration.md` — Bypass API validation for local testing
-- `references/creating-agent-skills.md` — Create skill YAML/JSON packages for agents
-- `references/booking-widget-implementation.md` — Complete booking UI pattern with availability checking
-- `references/business-onboarding-workflows.md` — Plugin packaging, practice mode setup, capability templates
-- `references/apache-wordpress-conflict-resolution.md` — 403 Forbidden on download URLs, slug conflicts
-
-## Common Tasks
-
-### Check Service Health
-
-```bash
-curl http://127.0.0.1:8085/health
-curl http://127.0.0.1:8088/health
-```
-
-### Search Registry
-
-```bash
-curl "http://127.0.0.1:8085/api/v1/search?q=demo"
-```
-
-### Get Business Details
-
-```bash
-curl "http://127.0.0.1:8085/api/v1/business/agw_..."
-```
-
-### Test Availability Lookup
-
-```bash
-curl "http://127.0.0.1:8088/availability?date=2026-07-01&service=room"
-```
-
-### Deploy Booking Widget
-
-For WordPress sites with Agent Gateway integration:
-
-```bash
-# 1. Add booking shortcode to theme functions.php
-# See: references/booking-widget-implementation.md
-
-# 2. Create booking page
-docker exec <container> wp --allow-root post create \
-  --post_type=page \
-  --post_title="Book an Artist" \
-  --post_content='[agw_booking_widget business="kunming-live-music"]' \
-  --post_status=publish \
-  --post_name=booking
-
-# 3. Verify deployment
-curl -s http://site.com/booking/ | grep "agw-booking-widget"
-```
+- Prefer decisive action on clear imperative requests; summarise after. Do not stack confirmation questions when the request is unambiguous.
+- For any deploy/registry/plugin change: inspect current state first, preserve a rollback path, verify after, and never touch production or run a production registry sync without explicit approval.
 
 ## Common Pitfalls
 
-### Polling Architecture: Do Not Poll From LLM Loop (CRITICAL)
+### Do not poll from the LLM loop
 
-**Agents using expensive models should not reason every 30 seconds just to check a status endpoint.**
+After submitting a request, do not have an expensive model reason every 30s to poll status. Submit, receive `request_id`, delegate to a lightweight polling worker with exponential backoff (15s, 30s, 60s, 2m, 5m, then every 10m up to ~12h), and wake the agent only on meaningful state change.
 
-### Required Flow
+### Skill design: overlay pattern
 
-```
-submit_request → receive request_id → schedule polling worker → agent sleeps → worker wakes agent on meaningful state change
-```
+Agent Gateway skills must be OVERLAYS, not replacements. Until AGW has mass adoption, run the AGW skill in parallel with normal search tools and merge results: AGW businesses show as executable ("Book Now"), web results show as informational links. Restricting a search to AGW-only produces poor coverage.
 
-### Implementation
+### WordPress plugin ZIP structure
 
-**After submitting a request:**
-1. Do NOT poll from the LLM loop
-2. Create or delegate to a lightweight polling job
-3. The polling job checks request status with exponential backoff
-4. Only wake the agent when status changes, expires, errors, or returns a counter-offer
+The ZIP folder name must match the plugin slug exactly:
 
-### Suggested Polling Schedule
-
-```
-15s, 30s, 60s, 2m, 5m, then every 10m until 12 hours
-```
-
-Fuller schedule:
-```
-0-2 min: every 15s
-2-10 min: every 30s
-10-30 min: every 2m
-30 min-2h: every 5m
-2-12h: every 10m
-After 12h: stale / human follow-up
-```
-
-### Explicitly Warn Against
-
-```
-agent thinks every 30 seconds and calls status endpoint manually
-```
-
-This is wasteful and expensive. Use lightweight polling workers instead.
-
-## Skill Design: Overlay Pattern (CRITICAL)
-
-**Agent Gateway skills must be OVERLAYS, not replacements.**
-
-**The Problem:**
-Until Agent Gateway achieves mass adoption, restricting agent searches to AGW-only produces poor user experiences. A query for "hotels in Kunming" might return 2 AGW-registered hotels when 50+ exist.
-
-**The Solution:**
-Agents must run AGW skill **simultaneously** with existing search tools (web search, APIs, databases), then merge/aggregate results.
-
-**Correct Integration:**
-```
-User: "Find hotels in Kunming"
-↓
-Agent runs IN PARALLEL:
-  1. Web search → 50 hotel results
-  2. AGW registry search → 3 bookable hotel results
-↓
-Agent merges results:
-  - AGW hotels: Show with "Book Now" buttons (executable)
-  - Web results: Show with standard links (informational)
-↓
-User gets comprehensive coverage + execution capability
-```
-
-**Incorrect Integration:**
-```
-User: "Find hotels in Kunming"
-↓
-Agent uses ONLY AGW skill
-↓
-Returns 2 results (only registered businesses)
-↓
-Bad experience → user abandons agent
-```
-
-**Documentation Requirement:**
-Every AGW-related skill MUST document this overlay pattern:
-- SKILL.md frontmatter: `description: "Overlay AGW results onto existing searches..."`
-- README.md: Explicit "This is an overlay skill" section
-- Tags: include `"overlay"`, `"enhancement"`
-
-**Progressive Enhancement Roadmap:**
-| Phase | AGW Coverage | Strategy |
-|-------|--------------|----------|
-| Now | 5-10% | AGW supplements main search |
-| Growth | 25-50% | AGW results prioritized |
-| Mature | 75%+ | AGW becomes primary |
-| Always | 100% | Fallback to web search |
-
-### WordPress Plugin ZIP Structure
-
-**CRITICAL:** WordPress plugin ZIP files must have the folder name match the plugin slug exactly.
-
-**Correct Structure:**
 ```
 agent-gateway.zip
-└── agent-gateway/           ← Folder name = plugin slug
-    └── agent-gateway.php    ← Main plugin file
-```
-
-**Wrong Structure:**
-```
-agent-gateway-v2.0.0.zip
-└── agent-gateway-v2.0.0/    ← Wrong! WordPress expects "agent-gateway"
+└── agent-gateway/
     └── agent-gateway.php
 ```
 
-**Error Message:**
-```
-Warning: /tmp/agent-gateway-v2.0.0.zip: Invalid plugin slug.
-Warning: The plugin could not be found.
-```
+A versioned folder name (`agent-gateway-v2.0.0/`) causes "Invalid plugin slug / plugin could not be found". Always verify ZIP/source parity by SHA-256 before deploying.
 
-**Fix:** Rename folder inside ZIP to match plugin slug (from plugin header `Plugin Name:`).
+### One business per site
 
-### Apache/WordPress Slug Conflicts
+The plugin supports ONE `registry_id` per site. For multiple test businesses, use separate WordPress instances, each with its own `registry_id`.
 
-**Problem:** Physical directory `/downloads/` conflicts with WordPress page `/downloads/`
+### Settings storage format
 
-**Symptom:** 403 Forbidden when accessing download URLs
-
-**Root Cause:** Apache `Options -Indexes` blocks directory listing, but WordPress rewrite rules don't handle the conflict.
-
-**Solutions (in order of preference):**
-
-**Option 1: Rename physical directory**
-```bash
-mv /var/www/html/downloads /var/www/html/assets
-```
-Add rewrite rule to .htaccess:
-```apache
-RewriteRule ^downloads/(.*)$ /assets/$1 [L]
-```
-
-**Option 2: Serve via PHP proxy**
-Create `/downloads/index.php` that reads and serves ZIP files with proper headers.
-
-**Option 3: Use WordPress media library**
-Upload files via WP admin, serve from `/wp-content/uploads/`.
-
-**Verification:**
-```bash
-curl -s -o /dev/null -w "%{http_code}\n" http://site/downloads/file.zip
-# Should return 200, not 403
-```
-
-### One Business Per Site
-
-**CRITICAL:** The Agent Gateway WordPress plugin only supports ONE registry_id per site. You cannot have multiple businesses on the same WordPress installation.
-
-**If you need multiple test businesses:**
-
-```bash
-# Create separate WordPress containers for each business
-# Example: Main product site + Kunming test site
-
-# Main site (port 8082) - Official Agent Gateway product site
-docker run -p 8082:80 wordpress:latest
-
-# Test site (port 8085) - Kunming Live Music Booking
-docker run -p 8085:80 wordpress:latest
-```
-
-**Configure each with different registry_id:**
-
-```php
-// Main site: registry_id = "" or product-specific ID
-// Test site: registry_id = "kunming-live-music"
-```
-
-**Why this matters:**
-- User said "whay cant this just be one part of the site, not take over the site"
-- The plugin's `.well-known/agent` endpoint can only serve ONE profile
-- Multiple businesses = multiple WordPress instances
-
-### Product Site vs Booking Site
-
-**AGENT GATEWAY IS NOT A BOOKING PLATFORM.**
-
-The booking functionality (dates, artists, availability) is ONLY for testing agent skills. The site is infrastructure for agent-driven commerce.
-
-**Correct Structure:**
-- **Main site (port 8082):** Product website explaining Agent Gateway V2
-  - Homepage: "Infrastructure Layer for Agent-Driven Commerce"
-  - Demo page: Interactive walkthroughs (User angle + Business owner angle)
-  - How It Works: Technical architecture explanation
-  - NO booking widgets on public pages
-
-- **Test site (port 8085):** Kunming Live Music Booking
-  - Hidden from public navigation
-  - Used ONLY for testing agent booking capabilities
-  - Accessible via direct URL, not linked from main site
-
-**WRONG:** Adding booking widgets to main product site
-**RIGHT:** Separate test site for booking functionality
-
-### Settings Storage Format
-
-The plugin stores settings as a PHP array, NOT a JSON string:
+The plugin stores settings as a PHP array, not a JSON string:
 
 ```php
 // CORRECT:
-$settings = array(
-    'registry_id' => 'kunming-live-music',
-    'business_type' => 'entertainment',
-    'enabled_actions' => array('availability_request', 'booking_request')
-);
-update_option('agw_settings', $settings);
-
-// WRONG (creates double-encoded string):
-update_option('agw_settings', json_encode($settings));
+update_option('agw_settings', array(
+  'registry_id' => 'kunming-live-music',
+  'sandbox_demo_mode' => false,
+));
+// WRONG (double-encoded): update_option('agw_settings', json_encode($settings));
 ```
 
-Verify with:
-```bash
-wp option get agw_settings --format=json
-```
+Verify with `wp option get agw_settings --format=json`.
+
+### Apache/WordPress slug conflicts
+
+A physical `/downloads/` directory conflicting with a WordPress page of the same slug returns 403 Forbidden. Rename the physical directory (and add a rewrite), serve via a PHP proxy, or use the WP media library. Verify with an HTTP status check expecting 200.
+
+## References
+
+- `references/v0.2-implementation-stages.md` — staged rollout plan.
+- `references/action-state-model.md` — action state machine.
+- `references/demo-adapter-spec.md` — availability adapter API.
+- `references/booking-widget-implementation.md` — booking UI pattern.
+- `references/business-onboarding-workflows.md` — plugin packaging and onboarding.
+- `references/apache-wordpress-conflict-resolution.md` — 403/slug conflict fixes.
+- Canonical repo `docs/` — V3 task specs and the demo loop-close evidence.
