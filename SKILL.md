@@ -1,6 +1,6 @@
 ---
 name: "agent-gateway"
-description: "Make Agent Gateway an automatic parallel overlay on normal search, with actionable results clearly marked."
+description: "Use a simple green-light agent-friendly tag on merged search results; reveal capabilities only when relevant."
 title: Agent Gateway Search Overlay and Operations
 trigger: Automatically on every relevant search or discovery request involving businesses, products, services, accommodation, venues, appointments, availability, reservations, bookings, payments, enquiries, or local/commercial options; also when Agent Gateway, AGW, registry, /.well-known/agent, action state, availability_lookup, reservation_intent_create, payment_or_pms_handoff, or sandbox demo booking is mentioned. The user does not need to invoke Agent Gateway explicitly.
 ---
@@ -9,62 +9,60 @@ trigger: Automatically on every relevant search or discovery request involving b
 
 ## Mandatory Automatic Search Overlay
 
-**This is the governing product rule. Agent Gateway is an automatic execution overlay on normal search, never a replacement search engine or closed directory.**
+**Agent Gateway is an automatic execution overlay on normal search, never a replacement search engine or closed directory.**
 
 Whenever a user searches for relevant businesses, products, services, accommodation, venues, appointments, availability, reservations, bookings, payment options, enquiries, or other local/commercial choices:
 
-1. Run the normal search path unchanged using the standard web/search/platform tools that would ordinarily apply.
+1. Run the normal search path unchanged using the standard web/search/platform tools that ordinarily apply.
 2. At the same time, query the configured Agent Gateway registry for matching businesses and capabilities.
 3. Do this automatically. The user does not need to mention, invoke, or know about Agent Gateway.
-4. Merge the two result sets into one useful answer.
+4. Merge the two result sets.
 5. Preserve ordinary search results even when they are not registered with Agent Gateway.
-6. Clearly label Agent Gateway results as **Agent-friendly** or **Actionable by agent** and list the actions actually available, such as:
-   - Check live availability
-   - Create reservation intent
-   - Complete authorised booking/payment flow
-   - Send enquiry
-   - Request appointment
-7. Present non-Agent-Gateway results normally as informational/web results. Do not describe them as inferior; simply do not claim executable actions that have not been verified.
-8. If the registry returns no matches, still return the complete normal-search result. Do not reduce coverage or fail the search.
-9. Never imply the Agent Gateway registry is comprehensive. Until adoption is broad, its role is to enrich search with executable options.
-10. Never show only registry results unless the user explicitly asks for Agent-Gateway-only results.
+6. Add a simple green-light marker to Agent Gateway-enabled results: **🟢**.
+7. Explain once, briefly, if needed: **🟢 means this business is agent-friendly.**
+8. Do not dump capability names, action-state metadata, endpoint details, or technical labels into the default result list.
+9. Reveal available actions only after the user selects the result, asks what the agent can do, or the next conversational step requires an action.
+10. Do not add red lights, negative labels, or “information only” warnings to ordinary results. They remain normal search results.
+11. If the registry returns no matches, still return the complete normal-search result.
+12. Never imply registry coverage is comprehensive.
+13. Never show only registry results unless the user explicitly asks for Agent-Gateway-only results.
 
 ### Result-merging rules
 
-- Deduplicate the same business when it appears in both normal search and Agent Gateway.
+- Deduplicate the same business when it appears in normal search and Agent Gateway.
 - Keep useful normal-search context such as reviews, editorial information, maps, pricing signals, and public webpages.
-- Add Agent Gateway capability data to the matching result rather than showing a confusing duplicate.
-- Give actionable status only when the corresponding action is declared and sufficiently verified under the registry/action-state rules.
-- Make the difference visible in concise language, for example:
-  - **Agent-friendly — availability and booking supported**
-  - **Agent-friendly — enquiry supported**
-  - **Web result — information only**
-- Do not automatically rank an Agent Gateway result first merely because it is registered. Rank for user relevance, then make actionability clear.
+- Add only the green marker to the matching result by default.
+- Do not automatically rank a result first merely because it is registered. Rank for user relevance.
+- Treat the green marker as a quiet affordance: it tells the user the agent can interact with that business if selected.
+- After selection, inspect the verified action state and explain only the actions relevant to the user's request.
 
-### Example merged answer pattern
+### Example default search presentation
 
 ```text
-1. Yunnan Reggae Palace — Agent-friendly
-   Available agent actions: check availability, create reservation intent, complete authorised sandbox booking.
-   Normal-search context: location, room information, reviews, public website.
+1. Yunnan Reggae Palace 🟢
+   Short normal-search description, location, price/review context.
 
-2. Example Hotel — Web result
-   Public information and booking link available; no verified agent actions found.
+2. Example Hotel
+   Short normal-search description, location, price/review context.
+
+🟢 Agent-friendly
 ```
+
+Do not append a capability catalogue to item 1 unless the user selects it or asks.
 
 ## Overview
 
-Agent Gateway helps businesses become discoverable and usable by AI agents without forcing agents to scrape websites, bypass bot protections, or pretend to be human browsers. A business exposes only the specific functions it is happy for agents to use and keeps everything else private — reorganising the site for agents rather than redesigning the internet.
+Agent Gateway helps businesses become discoverable and usable by AI agents without forcing agents to scrape websites, bypass bot protections, or pretend to be human browsers. A business exposes only the specific functions it allows and keeps everything else private.
 
-**Layering:** The registry is the discovery layer. The plugin is the onboarding and exposure layer. Business systems (and, in production, real payment/PMS providers) remain authoritative and execute the actual actions. Agent Gateway governs and exposes the action interface; it does not replace the business's own booking, payment, CRM, or inventory systems.
+**Layering:** The registry is the discovery layer. The plugin is the onboarding and exposure layer. Business systems and real payment/PMS providers remain authoritative. Agent Gateway governs and exposes the action interface; it does not replace the business's booking, payment, CRM, or inventory systems.
 
-**Product stance:** The goal is automation — authorised agents completing real business workflows through business-approved rails. Human approval is one configurable policy mode, not a mandatory gate on every action. Payment is not taboo: Agent Gateway exposes/governs the action interface while business systems and payment providers execute authorised actions.
+**Product stance:** Authorised agents should complete real business workflows through business-approved rails. Human approval is one configurable policy mode, not a mandatory gate for every action. Payment may be supported through business systems/providers.
 
 ## Version Map
 
 - **v0.1** — frozen baseline.
-- **v0.2** — action-state model: detected, approved, verified.
-- **V3** — executable reservation orchestration: tokenized reservation intent, payment/PMS handoff, and sandbox loop-close.
+- **v0.2** — action states: detected, approved, verified.
+- **V3** — reservation orchestration: tokenized intent, payment/PMS handoff, approval policy, and sandbox loop-close.
 
 ## V3 Reservation Orchestration and Sandbox Loop-Close
 
@@ -77,153 +75,141 @@ Agent Gateway helps businesses become discoverable and usable by AI agents witho
 
 ```text
 discovery -> catalogue -> availability -> reservation_intent_create
-  -> payment_or_pms_handoff prompt -> user says "Yes, I verify"
-  -> booking_confirmed
+  -> owner policy/approval state -> payment_or_pms_handoff prompt
+  -> user says "Yes, I verify" -> booking_confirmed
 ```
+
+### Approval policy rule
+
+Payment must not begin merely because an intent exists.
+
+- If owner auto-approval is enabled and the request satisfies the configured policy, record the auto-approval and proceed.
+- If auto-approval is disabled, return/wait in an owner-approval state.
+- If the owner proposes changes, relay them to the user and obtain acceptance before creating/revising the intent and proceeding.
+- If approval is pending, changed, rejected, stale, or mismatched to the current booking terms, do not issue the payment prompt.
 
 ### Sandbox demo mode
 
-`sandbox_demo_mode` is default OFF. It is only for controlled demonstration and uses no real payment provider, PMS, customer, or inventory system.
+`sandbox_demo_mode` is default OFF and uses no real payment provider, PMS, customer, or inventory system.
 
-When enabled:
+When enabled and approval policy permits progression:
 
 1. First handoff call returns `payment_verification_required`, prompt `Do you verify payment?`, and expected response `Yes, I verify`.
-2. A later confirmation call with `payment_verification: "Yes, I verify"` returns `booking_confirmed`, `sandbox=true`, a `sandbox_booking_*` confirmation reference, and writes a labelled `sandbox_booking` record into WordPress Agent Requests.
+2. A later confirmation call with `payment_verification: "Yes, I verify"` returns `booking_confirmed`, `sandbox=true`, a `sandbox_booking_*` reference, and writes a labelled sandbox record into WordPress Agent Requests.
 
 Guards:
 
-- Only the exact string `Yes, I verify` advances.
-- Confirmation fails if the prompt was not previously issued.
+- Only exact `Yes, I verify` advances.
+- Prompt and confirmation occur in separate turns.
+- Confirmation fails if the prompt was not issued.
 - Repeat confirmations are idempotent.
 - `payment_processed=false`, `reservation_hold_created=false`, `inventory_locked=false`, and `inventory_decremented=false` remain false.
-- `payment_verified=true` and `booking_created=true` mean fake sandbox state only and must be accompanied by `sandbox_only=true`.
-
-When sandbox mode is OFF, handoff remains external/instructions-only unless a real configured business rail provides structured completion evidence.
+- `payment_verified=true` and `booking_created=true` mean fake sandbox state only and require `sandbox_only=true`.
 
 ### Idempotency
 
-Use a fresh `idempotency_key` for each distinct request payload. The payment prompt request and confirmation request have different payloads and must use different keys. Reuse a key only for an exact retry.
+Use a fresh `idempotency_key` for each distinct request payload. Prompt and confirmation payloads require different keys. Reuse a key only for an exact retry.
 
 ## Conversational Agent Operation (Telegram / Chat)
 
-When the user asks to test or use Agent Gateway in a real agent conversation, do not substitute the Python demo script, a prerecorded transcript, or a one-shot scripted run. The conversation itself is the test surface.
+When the user asks to test or use Agent Gateway in a real agent conversation, do not substitute the Python demo script, prerecorded transcript, or one-shot scripted run.
 
 ### Required conversational behaviour
 
-1. Treat the user's natural-language request as the start of the flow.
-2. Run normal search and Agent Gateway registry search in parallel.
-3. Present merged options conversationally, clearly marking agent-friendly results and available executable actions.
+1. Treat the user's natural-language request as the start.
+2. Run normal search and Agent Gateway search in parallel.
+3. Merge results and add only **🟢** to agent-friendly matches by default.
 4. Ask only for missing decisions such as dates, room, guests, or budget.
-5. Retain the selected business, room, dates, guest count, and availability reference in current conversation state.
-6. Before intent creation, briefly confirm the selected details and whether the flow is sandbox or real.
-7. Create the reservation intent with a fresh idempotency key; retain the intent token privately.
-8. Call the first payment/PMS handoff with another fresh key.
-9. If it returns `payment_verification_required`, relay the prompt and stop the turn. Do not auto-answer, infer consent, or confirm in the same turn.
-10. Only after the user replies with exact required phrase `Yes, I verify`, call confirmation using a new key.
-11. Report success only when response contains `status=booking_confirmed`, `sandbox=true`, `is_confirmation=true`, `confirmation_type=sandbox_booking`, and a `sandbox_booking_*` reference.
-12. State plainly that sandbox payment and booking are fake and `payment_processed=false`.
-13. Tell the user to inspect **Agent Gateway → Agent Requests** in WordPress.
+5. After the user selects a green-marked result, explain only the capabilities relevant to that request.
+6. Retain selected business, room, dates, guests, price, and availability reference in current conversation state.
+7. Confirm selected terms and whether the flow is sandbox or real before intent creation.
+8. Create intent with a fresh idempotency key and retain the token privately.
+9. Respect the owner's approval policy. If approval is pending, tell the user and wait/check later; do not prompt for payment.
+10. If the owner proposes changes, show those changes and wait for user acceptance before revising the intent.
+11. Call payment/PMS handoff only after the applicable approval state permits it.
+12. If handoff returns `payment_verification_required`, relay the prompt and stop the turn.
+13. Only after the user replies with exact `Yes, I verify`, call confirmation with a new key.
+14. Report success only when response contains `booking_confirmed`, `sandbox=true`, `is_confirmation=true`, `confirmation_type=sandbox_booking`, and a `sandbox_booking_*` reference.
+15. State plainly that sandbox payment/booking are fake and `payment_processed=false`.
+16. Tell the user where to inspect the record in WordPress Agent Requests.
 
 ### Conversation-state rules
 
-- Keep intent tokens and idempotency keys out of normal chat unless technical evidence is requested.
+- Keep intent tokens and idempotency keys out of normal chat unless requested.
 - Never reuse the prompt key for confirmation.
-- If dates, room, guests, or payload fields change, restart from availability and create a new intent.
-- If the session resets after intent creation, do not reconstruct or guess the token; restart safely.
-- If registry discovery is unavailable, say the conversational pathway is not ready. Do not silently substitute the demo script and claim success.
+- If terms change, restart from availability and create/revise the intent safely.
+- If the session resets after intent creation, do not reconstruct or guess the token.
+- If registry discovery is unavailable, say the conversational pathway is not ready. Do not silently substitute the demo script.
 
 ### Real Telegram acceptance standard
 
-The test passes only when:
+A test passes only when:
 
-- the user initiated an ordinary natural-language search/request;
-- normal search and registry search both ran;
-- results were merged and actionable businesses were labelled;
-- the business was discovered through Agent Gateway rather than hard-coded;
-- at least one user choice occurred conversationally;
-- payment prompt and exact user reply occurred in separate Telegram turns;
-- the agent returned sandbox confirmation; and
-- the `sandbox_booking` record is visible in WordPress admin.
+- the user initiated an ordinary natural-language search;
+- normal and registry search both ran;
+- merged results used the simple green marker;
+- the business was discovered, not hard-coded;
+- actual catalogue/media/availability data supported the requested actions;
+- owner manual or auto-approval policy was correctly enforced;
+- prompt and user verification occurred in separate turns;
+- sandbox confirmation returned; and
+- the WordPress record displayed complete booking details.
 
 ## Architecture and Source of Truth
 
-- Deployable project: `https://github.com/unitysam-dev/agent-gateway`
-- Skill repository: `https://github.com/unitysam-dev/openclaw-skill-agent-gateway`
-- Read project `AGENT_GATEWAY_CHECKPOINT.md`, `SOURCE_OF_TRUTH.md`, and `docs/OPERATION_PROTOCOL.md` before implementation, deployment, registry, or plugin work.
-- Cross-agent handovers belong in the canonical project repository, not local scratch paths.
-- The Reggae Palace/openclaw-bent WordPress instance is a private controlled test harness, not a production business.
+- Project: `https://github.com/unitysam-dev/agent-gateway`
+- Skill: `https://github.com/unitysam-dev/openclaw-skill-agent-gateway`
+- Read project checkpoint, source of truth, and operation protocol before implementation/deployment work.
+- Reggae Palace/openclaw-bent is a controlled test harness, not production.
 
 ## Action State Model
 
 1. **detected** — compatible system/action found.
-2. **approved** — owner allowed agent access.
-3. **verified** — Agent Gateway tested and confirmed the action.
+2. **approved** — owner allowed access.
+3. **verified** — action was tested and confirmed.
 
-Only verified actions should be presented as fully available/executable. Detected or approved states may be shown with accurate status but must not be overstated.
+Only sufficiently verified actions make a result eligible for the green marker. Do not expose action-state jargon in default search output.
 
 ## Key Endpoints
-
-### V3 executable endpoints
-
-| Endpoint | Method | Purpose |
-|---|---|---|
-| `agent-gateway/v1/reservation-intents` | POST | Create tokenized reservation intent |
-| `agent-gateway/v1/payment-or-pms-handoff` | POST | Handoff or sandbox confirmation flow |
-
-### Registry endpoints
 
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/api/v1/search` | GET | Search registered businesses |
 | `/api/v1/actions` | GET | List advertised actions |
-| `/api/v1/business/{id}` | GET | Business details and action states |
-| `/api/v1/business/{id}/actions` | GET | Business action states |
-| `/api/v1/actions/detect` | POST | Report detected actions |
-| `/api/v1/actions/approve` | POST | Approve action |
-| `/api/v1/actions/verify` | POST | Verify action |
+| `/api/v1/business/{id}` | GET | Business/action details |
+| `agent-gateway/v1/reservation-intents` | POST | Create reservation intent |
+| `agent-gateway/v1/payment-or-pms-handoff` | POST | Handoff/confirmation flow |
 
 ## Security and Operational Rules
 
 - No admin access through Agent Gateway.
-- No destructive actions without explicit approval and rollback.
+- No destructive actions without approval and rollback.
 - Detection occurs locally in WordPress; registry must not externally scan sites.
 - Real business systems remain authoritative.
-- Never expose secrets in chat, search results, public capability documents, or logs.
-- For deployment or registry changes: inspect first, preserve rollback, verify after, and do not touch production without approval.
+- Never expose secrets in chat, search results, capabilities, or logs.
+- Inspect first, preserve rollback, verify after, and do not touch production without approval.
 
 ## Common Pitfalls
 
 ### Registry-only search
 
-Registry-only search is a product failure unless explicitly requested. It discards normal-search coverage and makes Agent Gateway useless before mass adoption. Always use the mandatory automatic overlay pattern.
+Registry-only search is a product failure unless explicitly requested. Always preserve normal-search coverage.
+
+### Overloading search results
+
+Do not turn search results into technical capability reports. Use the green marker only. Explain actions after selection.
 
 ### Demo script substitution
 
-`demo/v3_agent_demo_flow.py` is a diagnostic tool. It can verify endpoint mechanics but does not satisfy a real conversational Telegram test.
-
-### Polling from the LLM loop
-
-Do not reason every few seconds to poll. Delegate longer status polling to a lightweight worker with exponential backoff and wake the agent on meaningful state change.
+`demo/v3_agent_demo_flow.py` is diagnostic only and does not satisfy a real Telegram test.
 
 ### WordPress plugin ZIP structure
 
-The ZIP must contain:
-
-```text
-agent-gateway.zip
-└── agent-gateway/
-    └── agent-gateway.php
-```
-
-Verify source/package SHA-256 parity before deployment.
+The ZIP must contain `agent-gateway/agent-gateway.php`. Verify source/package SHA-256 parity.
 
 ### One business per site
 
-The plugin supports one `registry_id` per WordPress site. Use separate test instances for separate businesses.
-
-### Settings format
-
-WordPress stores Agent Gateway settings as a PHP array, not a JSON string.
+The plugin supports one `registry_id` per WordPress site.
 
 ## References
 
