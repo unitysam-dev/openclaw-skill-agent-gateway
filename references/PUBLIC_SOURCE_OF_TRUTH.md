@@ -2,30 +2,25 @@
 
 Agent Gateway is an automatic overlay on ordinary commercial search.
 
-## Current public registry
+## Current registry
 
 ```text
 https://openclaw-bent.srv1536342.hstgr.cloud/registry
 ```
 
-Use `/health` before `/api/v1/search`. The current registry may match business names more reliably than locations, so combine user-query lookup with exact candidate names from ordinary search.
+## Green marker
 
-## Discovery fallback
+`🟢` means the business is listed by the trusted Agent Gateway registry.
 
-When registry health, coverage, or matching is incomplete, inspect candidate business websites through same-origin Agent Gateway discovery documents. Missing registry results do not disable the overlay.
+- Listed → green.
+- Not listed → no green.
 
-## Verification
+Action verification and approval states govern what can be done after selection. They do not suppress the registry-membership marker.
 
-A business receives `🟢` only when business identity and the relevant capability are verified. `detected`, `declared`, `approved`, `verification_pending`, or document presence is insufficient.
+## Search behavior
+
+Run ordinary search and registry search together. Preserve ordinary results. Registry matching may work better with exact business names than location-only queries.
 
 ## Authority
 
-Ordinary search remains complete. Business systems remain authoritative for availability, price, policy, customer data, inventory, reservation, and payment state.
-
-## Outcome semantics
-
-Keep discovery, availability, intent, approval, handoff, payment confirmation, and reservation confirmation distinct.
-
-## Public/private boundary
-
-The public skill contains no credentials, private infrastructure details, deployment history, or project source.
+Business systems remain authoritative for availability, price, policy, inventory, reservations, and payment state. Registry membership does not itself confirm any transaction.
