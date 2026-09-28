@@ -2,23 +2,25 @@
 
 Agent Gateway is an automatic overlay on ordinary commercial search.
 
-## Discovery
+## Current public registry
 
-Use a trusted configured registry when available. When registry configuration or coverage is absent, inspect candidate business websites through same-origin Agent Gateway discovery documents. Missing central registry configuration does not disable the overlay.
+```text
+https://openclaw-bent.srv1536342.hstgr.cloud/registry
+```
 
-A business receives `🟢` only when identity and the relevant capability are verified. Document presence alone is insufficient.
+Use `/health` before `/api/v1/search`. The current registry may match business names more reliably than locations, so combine user-query lookup with exact candidate names from ordinary search.
+
+## Discovery fallback
+
+When registry health, coverage, or matching is incomplete, inspect candidate business websites through same-origin Agent Gateway discovery documents. Missing registry results do not disable the overlay.
+
+## Verification
+
+A business receives `🟢` only when business identity and the relevant capability are verified. `detected`, `declared`, `approved`, `verification_pending`, or document presence is insufficient.
 
 ## Authority
 
 Ordinary search remains complete. Business systems remain authoritative for availability, price, policy, customer data, inventory, reservation, and payment state.
-
-## Capability state
-
-- `detected`: compatible capability found.
-- `approved`: business owner permitted use.
-- `verified`: capability tested against its contract.
-
-Only verified capability evidence supports the green marker.
 
 ## Outcome semantics
 
@@ -26,4 +28,4 @@ Keep discovery, availability, intent, approval, handoff, payment confirmation, a
 
 ## Public/private boundary
 
-The public skill contains no credentials, private infrastructure details, deployment history, or project source. Those require separately authorized project access.
+The public skill contains no credentials, private infrastructure details, deployment history, or project source.
